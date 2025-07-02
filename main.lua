@@ -68,6 +68,45 @@ local function get_mario_y_vel_from_floor(m)
     end
 end
 
+function interact_w_door(m)
+    local wdoor = obj_get_nearest_object_with_behavior_id(m.marioObj, id_bhvDoorWarp)
+    local door = obj_get_nearest_object_with_behavior_id(m.marioObj, id_bhvDoor)
+    local sdoor = obj_get_nearest_object_with_behavior_id(m.marioObj, id_bhvStarDoor)
+
+    if door ~= nil and dist_between_objects(m.marioObj, door) < 150 then
+        interact_door(m, 0, door)
+        --djui_chat_message_create("door.")
+        if door.oAction == 0 then
+            if (should_push_or_pull_door(m, door) & 1) ~= 0 then
+                door.oInteractStatus = 0x00010000
+            else
+                door.oInteractStatus = 0x00020000
+            end
+        end
+    elseif sdoor ~= nil and dist_between_objects(m.marioObj, sdoor) < 150 then
+        interact_door(m, 0, sdoor)
+        --djui_chat_message_create("star door.")
+        if sdoor.oAction == 0 then
+            if (should_push_or_pull_door(m, sdoor) & 1) ~= 0 then
+                sdoor.oInteractStatus = 0x00010000
+            else
+                sdoor.oInteractStatus = 0x00020000
+            end
+        end
+    elseif wdoor ~= nil and dist_between_objects(m.marioObj, wdoor) < 150 then
+        interact_warp_door(m, 0, wdoor)
+        set_mario_action(m, ACT_DECELERATING, 0)
+        --djui_chat_message_create("warp door.")
+        if wdoor.oAction == 0 then
+            if (should_push_or_pull_door(m, wdoor) & 1) ~= 0 then
+                wdoor.oInteractStatus = 0x00010000
+            else
+                wdoor.oInteractStatus = 0x00020000
+            end
+        end
+    end
+end
+
 local ACT_BALL_AIR = allocate_mario_action(ACT_GROUP_AIRBORNE | ACT_FLAG_AIR)
 local ACT_BALL_BOUNCE = allocate_mario_action(ACT_GROUP_STATIONARY)
 local ACT_BALL_ROLL = allocate_mario_action(ACT_GROUP_MOVING)
@@ -125,7 +164,7 @@ local function act_ball_bounce(m)
     end
         
     if m.vel.y < targetWithButton - 1 then
-        m.vel.y = m.vel.y + (targetWithButton - m.vel.y)*0.5
+        m.vel.y = m.vel.y + (math.min(targetWithButton, 99) - m.vel.y)*0.5
     else
         local floor = m.floor
         if floor ~= nil then
@@ -190,11 +229,12 @@ local function act_ball_roll(m)
         m.vel.z = m.vel.z * 0.7
         set_mario_action(m, ACT_BALL_BOUNCE, 0)
     end
+
+    interact_w_door(m)
 end
 
 local deathExitFrame = 60
 local function act_ball_death(m)
-    djui_chat_message_create(tostring(m.actionTimer))
     if (m.actionTimer == deathExitFrame) then
         level_trigger_warp(m, WARP_OP_DEATH);
     end
@@ -214,11 +254,28 @@ local ballActs = {
     [ACT_BALL_AIR] = true,
     [ACT_BALL_BOUNCE] = true,
     [ACT_BALL_ROLL] = true,
+    -- Allowed Vanilla Actions
+    [ACT_DISAPPEARED] = true,
+    [ACT_STAR_DANCE_EXIT] = true,
+    [ACT_STAR_DANCE_NO_EXIT] = true,
+    [ACT_STAR_DANCE_WATER] = true,
+    [ACT_CREDITS_CUTSCENE] = true,
+    [ACT_DEATH_EXIT_LAND] = true,
+    [ACT_SQUISHED] = true,
+    [ACT_IN_CANNON] = true,
+    [ACT_TELEPORT_FADE_OUT] = true,
+    [ACT_TELEPORT_FADE_IN] = true,
+    [ACT_PULLING_DOOR] = true,
+    [ACT_PUSHING_DOOR] = true,
+    [ACT_DECELERATING] = true,
+    [ACT_DROWNING] = true,
+    [ACT_AIR_THROW] = true,
 }
 
 local forceBallActs = {
     [ACT_SPAWN_NO_SPIN_AIRBORNE] = true,
     [ACT_SPAWN_SPIN_AIRBORNE] = true,
+    [ACT_WALKING] = true,
 }
 
 local knockbackActs = {
@@ -232,10 +289,20 @@ local knockbackActs = {
     [ACT_HARD_FORWARD_AIR_KB] = true,
     [ACT_HARD_FORWARD_GROUND_KB] = true,
     [ACT_SOFT_FORWARD_GROUND_KB] = true,
+    [ACT_AIR_THROW] = true,
 
     [ACT_DEATH_EXIT] = true,
     [ACT_SPECIAL_DEATH_EXIT] = true,
 }
+
+local function force_to_ball_state(m)
+    if m.action & ACT_FLAG_AIR == 0 then
+        return set_mario_action(m, ACT_BALL_ROLL, 0)
+    else
+        m.vel.y = 50
+        return set_mario_action(m, ACT_BALL_AIR, 0)
+    end
+end
 
 local function knockback_ball(m, attackerObj)
     local newFaceAngle = 0
@@ -250,12 +317,7 @@ local function knockback_ball(m, attackerObj)
     m.vel.x = sins(newFaceAngle)*50
     m.vel.z = coss(newFaceAngle)*50
 
-    if m.action & ACT_FLAG_AIR then
-        m.vel.y = 50
-        return set_mario_action(m, ACT_BALL_AIR, 0)
-    else
-        return set_mario_action(m, ACT_BALL_ROLL, 0)
-    end
+    return force_to_ball_state(m)
 end
 
 local function ball_update(m)
@@ -266,18 +328,13 @@ local function ball_update(m)
         end
         return
     end
-    if not ballActs[m.action] and ((
+    if (not ballActs[m.action] and ((
         m.action & ACT_GROUP_AUTOMATIC == 0 and
         m.action & ACT_GROUP_CUTSCENE == 0 and
         m.action & ACT_FLAG_INTANGIBLE == 0 and
         m.action & ACT_FLAG_INVULNERABLE == 0
-    ) or forceBallActs[m.action]) then
-        if m.action & ACT_FLAG_AIR ~= 0 then
-            m.vel.y = 30
-            set_mario_action(m, ACT_BALL_AIR, 0)
-        else
-            set_mario_action(m, ACT_BALL_ROLL, 0)
-        end
+    )) or forceBallActs[m.action]) then
+        force_to_ball_state(m)
     end
 
     m.faceAngle.y = atan2s(m.vel.z, m.vel.x)
@@ -327,18 +384,44 @@ end
 
 local function ball_before_action(m, nextAct)
     if knockbackActs[nextAct] then
+        gBallStates[m.playerIndex].prevVelY = m.vel.y
         return knockback_ball(m)
+    elseif not ballActs[m.action] then
+        return force_to_ball_state(m)
     end
 end
 
 local function ball_init(prevChar, currChar)
-    if currChar == CT_BALL then
-        local m = gMarioStates[0]
-        if m.action & ACT_FLAG_AIR ~= 0 then
-            m.vel.y = 30
-            set_mario_action(m, ACT_BALL_AIR, 0)
-        else
-            set_mario_action(m, ACT_BALL_ROLL, 0)
+    local m = gMarioStates[0]
+    if currChar == CT_BALL and m ~= nil then
+        force_to_ball_state(m)
+    end
+end
+
+-- BOWSER INTERACTION CODE
+-- Thank you SwagSkeleton95
+local function hit_effect_bowser(o, target)
+    if target.oAction ~= 19 and target.oAction ~= 4 and target.oAction ~= 12 and target.oAction ~= 1 then
+        target.oMoveFlags = 0
+        target.oFaceAngleYaw = obj_angle_to_object(target, o)
+        target.oMoveAngleYaw = obj_angle_to_object(target, o)
+        target.oSubAction = 0
+        target.oAction = 1
+        target.oVelY = 25
+        target.oForwardVel = -45
+    end
+end
+
+
+local function ball_on_interact(m, obj, interactType, interactBool)
+    local e = gBallStates[m.playerIndex]
+    if e.prevVelY ~= nil and e.prevVelY < -14.0 then
+        --if obj_has_behavior_id(obj, id_bhvBowser) ~= 0 then -- Seems to break
+        --    hit_effect_bowser(m.marioObj, obj)
+        --    m.health = m.health + (4 << 8)
+        if obj_has_behavior_id(obj, id_bhvBowserBodyAnchor) ~= 0 then
+            hit_effect_bowser(m.marioObj, obj.parentObj)
+            m.hurtCounter = 0
         end
     end
 end
@@ -348,4 +431,5 @@ _G.charSelect.character_hook_moveset(CT_BALL, HOOK_ON_PVP_ATTACK, ball_on_pvp)
 _G.charSelect.character_hook_moveset(CT_BALL, HOOK_ALLOW_INTERACT, ball_allow_interact)
 _G.charSelect.character_hook_moveset(CT_BALL, HOOK_BEFORE_SET_MARIO_ACTION, ball_before_action)
 _G.charSelect.character_hook_moveset(CT_BALL, HOOK_ALLOW_FORCE_WATER_ACTION, ball_allow_water)
+_G.charSelect.character_hook_moveset(CT_BALL, HOOK_ON_INTERACT, ball_on_interact)
 _G.charSelect.hook_on_character_change(ball_init)
