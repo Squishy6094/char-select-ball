@@ -68,7 +68,11 @@ local function get_mario_y_vel_from_floor(m)
     end
 end
 
-function interact_w_door(m)
+local function cs_movesets_on()
+    return _G.charSelect.get_options_status(_G.charSelect.optionTableRef.localMoveset) and not _G.charSelect.are_movesets_restricted()
+end
+
+local function interact_w_door(m)
     local wdoor = obj_get_nearest_object_with_behavior_id(m.marioObj, id_bhvDoorWarp)
     local door = obj_get_nearest_object_with_behavior_id(m.marioObj, id_bhvDoor)
     local sdoor = obj_get_nearest_object_with_behavior_id(m.marioObj, id_bhvStarDoor)
@@ -108,11 +112,16 @@ function interact_w_door(m)
 end
 
 local ACT_BALL_AIR = allocate_mario_action(ACT_GROUP_AIRBORNE | ACT_FLAG_AIR)
+local ACT_BALL_WATER = allocate_mario_action(ACT_GROUP_SUBMERGED | ACT_FLAG_SWIMMING)
 local ACT_BALL_BOUNCE = allocate_mario_action(ACT_GROUP_STATIONARY)
 local ACT_BALL_ROLL = allocate_mario_action(ACT_GROUP_MOVING)
 local ACT_BALL_DEATH = allocate_mario_action(ACT_GROUP_CUTSCENE | ACT_FLAG_STATIONARY | ACT_FLAG_INTANGIBLE | ACT_FLAG_INVULNERABLE)
 
 local function act_ball_air(m)
+    if m.playerIndex == 0 and not cs_movesets_on() then
+        return set_mario_action(m, ACT_FREEFALL, 0)
+    end
+
     m.vel.x = m.vel.x + sins(m.intendedYaw)*m.intendedMag/32
     m.vel.z = m.vel.z + coss(m.intendedYaw)*m.intendedMag/32
 
@@ -134,18 +143,79 @@ local function act_ball_air(m)
             
             m.vel.x = vx - 2 * dot * nx
             m.vel.z = vz - 2 * dot * nz
-            
+
+            if m.controller.buttonDown & A_BUTTON ~= 0 then
+                m.vel.y = math.max(m.vel.y, 0) + math.sqrt(m.vel.x^2 + m.vel.z^2)
+            end
+
             m.vel.x = m.vel.x * 0.7
             m.vel.z = m.vel.z * 0.7
+        end
+    end
+
+    if m.waterLevel ~= nil and (m.pos.y + m.vel.y) < m.waterLevel - 140 then
+        return set_mario_action(m, ACT_BALL_WATER, 0)
+    end
+end
+
+local function act_ball_water(m)
+    if m.playerIndex == 0 and not cs_movesets_on() then
+        return set_mario_action(m, ACT_FREEFALL, 0)
+    end
+
+    m.vel.x = m.vel.x + sins(m.intendedYaw)*m.intendedMag/32
+    m.vel.z = m.vel.z + coss(m.intendedYaw)*m.intendedMag/32
+
+    local step = perform_water_step(m)
+    if step == WATER_STEP_HIT_FLOOR then
+        m.vel.y = math.abs(m.vel.y)
+    elseif step == WATER_STEP_HIT_WALL then
+        local wall = m.wall
+        if wall ~= nil then
+            local nx, nz = wall.normal.x, wall.normal.z
+            
+            local vx, vz = m.vel.x, m.vel.z
+            
+            local dot = vx * nx + vz * nz
+            
+            m.vel.x = vx - 2 * dot * nx
+            m.vel.z = vz - 2 * dot * nz
+            
+            m.vel.x = m.vel.x * 0.9
+            m.vel.z = m.vel.z * 0.9
 
             if m.controller.buttonDown & A_BUTTON ~= 0 then
                 m.vel.y = math.max(m.vel.y, 0) + math.sqrt(m.vel.x^2 + m.vel.z^2)
             end
         end
     end
+
+    if m.controller.buttonDown & Z_TRIG ~= 0 then
+        m.vel.y = m.vel.y - 1
+    elseif m.controller.buttonDown & A_BUTTON ~= 0 then
+        m.vel.y = m.vel.y + 3
+    else
+        m.vel.y = m.vel.y + 2
+    end
+
+    m.vel.x = clamp(m.vel.x, -40, 40)
+    m.vel.y = clamp(m.vel.y, -40, 40)
+    m.vel.z = clamp(m.vel.z, -40, 40)
+    
+    if (m.pos.y + m.vel.y) >= m.waterLevel - 140 then
+        m.pos.y = m.waterLevel - m.vel.y
+        m.vel.y = m.vel.y
+        set_mario_action(m, ACT_BALL_AIR, 0)
+    end
+
+    apply_water_current(m, {x = m.vel.x*0.25, y = m.vel.y*0.25, z = m.vel.z*0.25})
 end
 
 local function act_ball_bounce(m)
+    if m.playerIndex == 0 and not cs_movesets_on() then
+        return set_mario_action(m, ACT_FREEFALL, 0)
+    end
+
     local e = gBallStates[m.playerIndex]
     if m.actionTimer == 0 then
         e.prevVelX = m.vel.x
@@ -164,7 +234,7 @@ local function act_ball_bounce(m)
     end
         
     if m.vel.y < targetWithButton - 1 then
-        m.vel.y = m.vel.y + (math.min(targetWithButton, 99) - m.vel.y)*0.5
+        m.vel.y = m.vel.y + (targetWithButton - m.vel.y)*0.5
     else
         local floor = m.floor
         if floor ~= nil then
@@ -181,6 +251,10 @@ local function act_ball_bounce(m)
 end
 
 local function act_ball_roll(m)
+    if m.playerIndex == 0 and not cs_movesets_on() then
+        return set_mario_action(m, ACT_FREEFALL, 0)
+    end
+
     local e = gBallStates[m.playerIndex]
     local step = perform_ground_step(m)
     if step == GROUND_STEP_LEFT_GROUND then
@@ -246,6 +320,7 @@ local function act_ball_death(m)
 end
 
 hook_mario_action(ACT_BALL_AIR, act_ball_air --[[INT_FAST_ATTACK_OR_SHELL]])
+hook_mario_action(ACT_BALL_WATER, act_ball_water)
 hook_mario_action(ACT_BALL_BOUNCE, act_ball_bounce, INT_GROUND_POUND)
 hook_mario_action(ACT_BALL_ROLL, act_ball_roll --[[INT_PUNCH]])
 hook_mario_action(ACT_BALL_DEATH, act_ball_death)
@@ -254,15 +329,14 @@ local ballActs = {
     [ACT_BALL_AIR] = true,
     [ACT_BALL_BOUNCE] = true,
     [ACT_BALL_ROLL] = true,
+
     -- Allowed Vanilla Actions
     [ACT_DISAPPEARED] = true,
-    [ACT_STAR_DANCE_EXIT] = true,
-    [ACT_STAR_DANCE_NO_EXIT] = true,
-    [ACT_STAR_DANCE_WATER] = true,
     [ACT_CREDITS_CUTSCENE] = true,
     [ACT_DEATH_EXIT_LAND] = true,
     [ACT_SQUISHED] = true,
     [ACT_IN_CANNON] = true,
+    [ACT_SHOT_FROM_CANNON] = true,
     [ACT_TELEPORT_FADE_OUT] = true,
     [ACT_TELEPORT_FADE_IN] = true,
     [ACT_PULLING_DOOR] = true,
@@ -275,7 +349,9 @@ local ballActs = {
 local forceBallActs = {
     [ACT_SPAWN_NO_SPIN_AIRBORNE] = true,
     [ACT_SPAWN_SPIN_AIRBORNE] = true,
+    [ACT_FALL_AFTER_STAR_GRAB] = true,
     [ACT_WALKING] = true,
+    [ACT_WATER_PLUNGE] = true,
 }
 
 local knockbackActs = {
@@ -289,18 +365,22 @@ local knockbackActs = {
     [ACT_HARD_FORWARD_AIR_KB] = true,
     [ACT_HARD_FORWARD_GROUND_KB] = true,
     [ACT_SOFT_FORWARD_GROUND_KB] = true,
-    [ACT_AIR_THROW] = true,
+    [ACT_THROWN_FORWARD] = true,
+    [ACT_THROWN_BACKWARD] = true,
 
     [ACT_DEATH_EXIT] = true,
     [ACT_SPECIAL_DEATH_EXIT] = true,
+    [ACT_DEATH_EXIT_LAND] = true,
+    [ACT_EXIT_AIRBORNE] = true,
 }
 
 local function force_to_ball_state(m)
-    if m.action & ACT_FLAG_AIR == 0 then
-        return set_mario_action(m, ACT_BALL_ROLL, 0)
-    else
-        m.vel.y = 50
+    if m.action & ACT_GROUP_AIRBORNE ~= 0 then
         return set_mario_action(m, ACT_BALL_AIR, 0)
+    elseif m.action & ACT_GROUP_SUBMERGED ~= 0 then
+        return set_mario_action(m, ACT_BALL_WATER, 0)
+    else
+        return set_mario_action(m, ACT_BALL_ROLL, 0)
     end
 end
 
@@ -315,6 +395,7 @@ local function knockback_ball(m, attackerObj)
     m.invincTimer = 30
 
     m.vel.x = sins(newFaceAngle)*50
+    m.vel.y = 50
     m.vel.z = coss(newFaceAngle)*50
 
     return force_to_ball_state(m)
@@ -375,25 +456,29 @@ local function ball_allow_interact(m, o, type)
     end
 end
 
-local function ball_allow_water(m, water)
-    if water == false then
-        m.vel.y = m.vel.y + 1
-        return false
-    end
-end
-
 local function ball_before_action(m, nextAct)
     if knockbackActs[nextAct] then
         gBallStates[m.playerIndex].prevVelY = m.vel.y
+        if m.action == ACT_THROWN_FORWARD then
+            m.faceAngle.y = convert_s16(m.faceAngle.y + 0x8000)
+        end
         return knockback_ball(m)
-    elseif not ballActs[m.action] then
+    elseif (not ballActs[nextAct] and ((
+        nextAct & ACT_GROUP_AUTOMATIC == 0 and
+        nextAct & ACT_GROUP_CUTSCENE == 0 and
+        nextAct & ACT_FLAG_INTANGIBLE == 0 and
+        nextAct & ACT_FLAG_INVULNERABLE == 0
+    )) or forceBallActs[nextAct]) then
         return force_to_ball_state(m)
     end
 end
 
 local function ball_init(prevChar, currChar)
+    if not cs_movesets_on() then
+        return
+    end
     local m = gMarioStates[0]
-    if currChar == CT_BALL and m ~= nil then
+    if currChar == CT_BALL then
         force_to_ball_state(m)
     end
 end
@@ -430,6 +515,6 @@ _G.charSelect.character_hook_moveset(CT_BALL, HOOK_MARIO_UPDATE, ball_update)
 _G.charSelect.character_hook_moveset(CT_BALL, HOOK_ON_PVP_ATTACK, ball_on_pvp)
 _G.charSelect.character_hook_moveset(CT_BALL, HOOK_ALLOW_INTERACT, ball_allow_interact)
 _G.charSelect.character_hook_moveset(CT_BALL, HOOK_BEFORE_SET_MARIO_ACTION, ball_before_action)
-_G.charSelect.character_hook_moveset(CT_BALL, HOOK_ALLOW_FORCE_WATER_ACTION, ball_allow_water)
 _G.charSelect.character_hook_moveset(CT_BALL, HOOK_ON_INTERACT, ball_on_interact)
+_G.charSelect.character_hook_moveset(CT_BALL, HOOK_ON_LEVEL_INIT, ball_init)
 _G.charSelect.hook_on_character_change(ball_init)
