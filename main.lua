@@ -5,11 +5,12 @@
 
 if not _G.charSelectExists then return end
 
-local E_MODEL_PLAYER_BALL = smlua_model_util_get_id("baller_geo")
-local ballColor = "FF0000"
+local E_MODEL_PLAYER_BALL = smlua_model_util_get_id("ball_player_geo")
+local TEX_BALL_ICON = get_texture_info("player-ball-icon")
+local ballColor = "FF0039"
 
-local CT_BALL = _G.charSelect.character_add("Ball", "Boing Boing boing boingg", "Squishy6094", ballColor, E_MODEL_PLAYER_BALL, CT_MARIO, nil, 0.7)
-_G.charSelect.character_add_palette_preset(E_MODEL_PLAYER_BALL, {[SHIRT] = ballColor})
+local CT_BALL = _G.charSelect.character_add("Ball", "Boing Boing boing boingg", "Squishy6094", ballColor, E_MODEL_PLAYER_BALL, CT_MARIO, TEX_BALL_ICON, 0.7)
+_G.charSelect.character_add_palette_preset(E_MODEL_PLAYER_BALL, {[CAP] = ballColor})
 _G.charSelect.character_add_voice(E_MODEL_PLAYER_BALL, {nil})
 
 local gBallStates = {}
@@ -18,8 +19,42 @@ for i = 0, MAX_PLAYERS - 1 do
         prevVelX = 0,
         prevVelY = 0,
         prevVelZ = 0,
+
+        rotX = 0,
+        rotZ = 0,
     }
 end
+
+local BALL_ANIM = 'ball_anim'
+smlua_anim_util_register_animation(BALL_ANIM, 1, 0, 0, 0, 0, { 
+0x0000, 0x0000, 0x0000, 0x4000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 
+0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 
+0x0000, 0xFFFF, 0x0000, 0xFFFF, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 
+0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0xFFFF, 0xFFFF, 0xFFFF, 0x0000, 
+0xFFFF, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0xFFFF, 0xFFFF, 0xFFFF, 
+0x0000, 0x0000, 0x0000, 0xFFFF, 0x0000, 0xFFFF, 0x0000, 0x0000, 0x0000, 
+0xFFFF, 0xFFFF, 0xFFFF, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 
+
+
+},{ 
+0x0001, 0x0000, 0x0001, 0x0001, 0x0001, 0x0002, 0x0001, 0x0003, 0x0001, 
+0x0004, 0x0001, 0x0005, 0x0001, 0x0006, 0x0001, 0x0007, 0x0001, 0x0008, 
+0x0001, 0x0009, 0x0001, 0x000A, 0x0001, 0x000B, 0x0001, 0x000C, 0x0001, 
+0x000D, 0x0001, 0x000E, 0x0001, 0x000F, 0x0001, 0x0010, 0x0001, 0x0011, 
+0x0001, 0x0012, 0x0001, 0x0013, 0x0001, 0x0014, 0x0001, 0x0015, 0x0001, 
+0x0016, 0x0001, 0x0017, 0x0001, 0x0018, 0x0001, 0x0019, 0x0001, 0x001A, 
+0x0001, 0x001B, 0x0001, 0x001C, 0x0001, 0x001D, 0x0001, 0x001E, 0x0001, 
+0x001F, 0x0001, 0x0020, 0x0001, 0x0021, 0x0001, 0x0022, 0x0001, 0x0023, 
+0x0001, 0x0024, 0x0001, 0x0025, 0x0001, 0x0026, 0x0001, 0x0027, 0x0001, 
+0x0028, 0x0001, 0x0029, 0x0001, 0x002A, 0x0001, 0x002B, 0x0001, 0x002C, 
+0x0001, 0x002D, 0x0001, 0x002E, 0x0001, 0x002F, 0x0001, 0x0030, 0x0001, 
+0x0031, 0x0001, 0x0032, 0x0001, 0x0033, 0x0001, 0x0034, 0x0001, 0x0035, 
+0x0001, 0x0036, 0x0001, 0x0037, 0x0001, 0x0038, 0x0001, 0x0039, 0x0001, 
+0x003A, 0x0001, 0x003B, 0x0001, 0x003C, 0x0001, 0x003D, 0x0001, 0x003E, 
+
+
+});
+
 
 local function get_mario_floor_steepness(m, angle)
     if angle == nil then angle = m.floorAngle end
@@ -110,6 +145,8 @@ local function interact_w_door(m)
         end
     end
 end
+
+local ballSpeedCap = 100
 
 local ACT_BALL_AIR = allocate_mario_action(ACT_GROUP_AIRBORNE | ACT_FLAG_AIR)
 local ACT_BALL_WATER = allocate_mario_action(ACT_GROUP_SUBMERGED | ACT_FLAG_SWIMMING)
@@ -232,8 +269,8 @@ local function act_ball_bounce(m)
     if m.controller.buttonDown & A_BUTTON ~= 0 then
         targetWithButton = math.abs(e.prevVelY)*1.1
     end
-        
-    if m.vel.y < targetWithButton - 1 then
+    
+    if m.vel.y < targetWithButton - 5 then
         m.vel.y = m.vel.y + (targetWithButton - m.vel.y)*0.5
     else
         local floor = m.floor
@@ -401,6 +438,7 @@ local function knockback_ball(m, attackerObj)
     return force_to_ball_state(m)
 end
 
+---@param m MarioState
 local function ball_update(m)
     local e = gBallStates[m.playerIndex]
     if m.health < 0x100 then
@@ -424,15 +462,22 @@ local function ball_update(m)
         local squishCalc = (m.action & ACT_FLAG_AIR ~= 0 and math.abs(m.vel.y*0.005) or -m.vel.y*0.01)
         obj_set_gfx_scale(m.marioObj, 1 - squishCalc, 1 + squishCalc, 1 - squishCalc)
     end
-    set_mario_animation(m, CHAR_ANIM_IDLE_HEAD_RIGHT)
 
-    m.vel.x = clamp(m.vel.x, -100, 100)
-    m.vel.y = clamp(m.vel.y, -100, 100)
-    m.vel.z = clamp(m.vel.z, -100, 100)
+    smlua_anim_util_set_animation(m.marioObj, BALL_ANIM)
+
+    m.vel.x = clamp(m.vel.x, -ballSpeedCap, ballSpeedCap)
+    m.vel.y = clamp(m.vel.y, -ballSpeedCap, ballSpeedCap)
+    m.vel.z = clamp(m.vel.z, -ballSpeedCap, ballSpeedCap)
 
     m.vel.x = clamp_soft(m.vel.x, -1, 1, 0.1)
     m.vel.y = clamp_soft(m.vel.y, -1, 1, 0.1)
     m.vel.z = clamp_soft(m.vel.z, -1, 1, 0.1)
+
+    -- Rolling Anim
+    e.rotX = e.rotX + m.forwardVel*0x60
+    m.marioObj.header.gfx.pos.y = m.pos.y + 50
+    m.marioObj.header.gfx.angle.x = e.rotX
+    --m.marioObj.header.gfx.angle.z = 0x4000
 
     -- Local Update
     if m.playerIndex == 0 then
